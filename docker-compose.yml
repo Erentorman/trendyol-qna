@@ -1,0 +1,22 @@
+services:
+  db:
+    image: postgres:16
+    container_name: trendyol_qna_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: trendyol_qna
+      POSTGRES_USER: trendyol
+      # Local development only — do not reuse in any other environment.
+      POSTGRES_PASSWORD: trendyol_local_dev
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U trendyol -d trendyol_qna"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  pgdata:
