@@ -85,3 +85,16 @@ curl -s -X POST http://127.0.0.1:5000/api/answer \
   -H 'Content-Type: application/json' \
   -d '{"question_id": 1, "text": "Merhaba, ürün stokta mevcuttur."}'
 ```
+
+## Faz 5 — Arayüz
+
+`http://127.0.0.1:5000/` NEW ve REOPENED soruları kart olarak gösterir; her kartta
+10–2000 karakter kontrollü cevap alanı, canlı sayaç ve "Cevapla" butonu vardır.
+Frontend sadece HTML + CSS + vanilla JS'tir (`app/static/`), build adımı yoktur.
+
+Frontend birim testleri Node'un yerleşik test aracıyla çalışır (npm paketi gerekmez);
+`pytest` Node kuruluysa bunları da otomatik çalıştırır:
+
+```bash
+node --test tests/js/app.test.js
+```

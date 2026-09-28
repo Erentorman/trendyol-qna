@@ -65,7 +65,7 @@ def load(Session, qid):
 
 
 def post(app, qid, text=VALID):
-    return app.test_client().post("/api/answer", json={"question_id": qid, "text": text})
+    return app.test_client().post("/api/answer", json={"question_id": qid, "answer": text})
 
 
 def test_index_lists_only_new_and_reopened(Session, make_app):
@@ -127,9 +127,9 @@ def test_short_answer_rejected_without_lock_or_api_call(Session, make_app):
     assert fake.calls == [] and load(Session, qid).local_status == "NEW"
 
 
-@pytest.mark.parametrize("payload", [None, {"text": VALID}, {"question_id": "1", "text": VALID},
-                                     {"question_id": True, "text": VALID},
-                                     {"question_id": 1, "text": 5}])
+@pytest.mark.parametrize("payload", [None, {"answer": VALID}, {"question_id": "1", "answer": VALID},
+                                     {"question_id": True, "answer": VALID},
+                                     {"question_id": 1, "answer": 5}, {"question_id": 1}])
 def test_invalid_request(make_app, Session, payload):
     resp = make_app(FakeTrendyol()).test_client().post("/api/answer", json=payload)
     assert resp.status_code == 400 and resp.get_json()["error"]["code"] == "INVALID_REQUEST"
@@ -247,3 +247,10 @@ def test_concurrent_duplicate_submit_sends_once(Session, make_app):
     # And after success, a resubmit is refused too.
     assert post(app, qid).get_json()["error"]["code"] == "ALREADY_LOCKED"
     assert len(fake.calls) == 1
+
+
+def test_legacy_text_field_still_accepted(Session, make_app):
+    qid = add(Session)
+    resp = make_app(FakeTrendyol()).test_client().post(
+        "/api/answer", json={"question_id": qid, "text": VALID})
+    assert resp.status_code == 200

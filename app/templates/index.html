@@ -4,31 +4,59 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Trendyol Soruları</title>
-  <style>
-    body { font-family: system-ui, sans-serif; margin: 16px; }
-    table { border-collapse: collapse; width: 100%; }
-    th, td { border-bottom: 1px solid #ddd; padding: 6px 8px; text-align: left; vertical-align: top; }
-  </style>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
-  <h1>Cevap bekleyen sorular ({{ questions|length }})</h1>
-  {% if questions %}
-  <table>
-    <thead><tr><th>ID</th><th>Durum</th><th>Ürün</th><th>Soru</th><th>Tarih</th></tr></thead>
-    <tbody>
+  <header class="page-header">
+    <h1>Cevap bekleyen sorular</h1>
+    <span class="badge-count" id="open-count">{{ questions|length }}</span>
+  </header>
+
+  <main id="questions" data-min="{{ min_length }}" data-max="{{ max_length }}">
     {% for q in questions %}
-      <tr data-question-id="{{ q.id }}">
-        <td>{{ q.id }}</td>
-        <td>{{ q.local_status }}</td>
-        <td>{{ q.product_name or "-" }}</td>
-        <td>{{ q.question_text }}</td>
-        <td>{{ q.question_created_at.strftime("%Y-%m-%d %H:%M") if q.question_created_at else "-" }}</td>
-      </tr>
+    <article class="card" data-question-id="{{ q.id }}" data-status="{{ q.local_status }}">
+      <div class="card-head">
+        <span class="status status-{{ q.local_status|lower }}">{{ q.local_status }}</span>
+        <span class="product">{{ q.product_name or "Ürün bilgisi yok" }}</span>
+      </div>
+      <p class="question">{{ q.question_text }}</p>
+      <p class="meta">
+        {{ q.customer_name or "Müşteri" }} ·
+        {{ q.question_created_at|local_dt or "tarih yok" }}
+      </p>
+
+      {% if q.local_status == "REOPENED" %}
+      <div class="previous" data-role="previous">
+        <p class="previous-title">Bu soru tekrar açıldı — Trendyol hâlâ cevap bekliyor.</p>
+        {% if q.answer_text %}
+        <p class="previous-answer"><strong>Önceki cevap:</strong> {{ q.answer_text }}</p>
+        {% endif %}
+        {% if q.answered_at %}
+        <p class="previous-date">Önceki cevap tarihi: {{ q.answered_at|local_dt }}</p>
+        {% endif %}
+        {% if q.error_code %}
+        <p class="previous-date">Son hata: {{ q.error_code }}</p>
+        {% endif %}
+      </div>
+      {% endif %}
+
+      <form class="answer-form" novalidate>
+        <label class="sr-only" for="answer-{{ q.id }}">Cevap</label>
+        <textarea id="answer-{{ q.id }}" name="answer" rows="3"
+                  minlength="{{ min_length }}" maxlength="{{ max_length }}"
+                  placeholder="Cevabınızı yazın ({{ min_length }}–{{ max_length }} karakter)"></textarea>
+        <div class="form-row">
+          <span class="counter" data-role="counter">0 / {{ max_length }}</span>
+          <button type="submit" data-role="submit" disabled>Cevapla</button>
+        </div>
+        <p class="message" data-role="message" role="status" aria-live="polite"></p>
+      </form>
+    </article>
+    {% else %}
+    <p class="empty">Cevap bekleyen soru yok.</p>
     {% endfor %}
-    </tbody>
-  </table>
-  {% else %}
-  <p>Cevap bekleyen soru yok.</p>
-  {% endif %}
+  </main>
+
+  <script src="{{ url_for('static', filename='app.js') }}"></script>
 </body>
 </html>

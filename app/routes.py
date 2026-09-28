@@ -1,10 +1,12 @@
 import logging
+from zoneinfo import ZoneInfo
 
 from flask import Blueprint, current_app, jsonify, render_template, request
 
 from app import crud
 from app.answer_service import AnswerError, submit_answer
 from app.db import SessionLocal
+from app.trendyol_client import ANSWER_MAX_LENGTH, ANSWER_MIN_LENGTH
 
 logger = logging.getLogger(__name__)
 
@@ -12,6 +14,14 @@ bp = Blueprint("questions", __name__)
 
 DEFAULT_LIMIT = 50
 MAX_LIMIT = 200
+
+
+DISPLAY_TZ = ZoneInfo("Europe/Istanbul")  # DB stores UTC; the UI shows Turkish local time
+
+
+@bp.app_template_filter("local_dt")
+def local_dt(value, fmt="%d.%m.%Y %H:%M"):
+    return value.astimezone(DISPLAY_TZ).strftime(fmt) if value else ""
 
 
 def ok(data, status=200):
@@ -36,6 +46,9 @@ def serialize(q):
         "error_code": q.error_code,
         "error_message": q.error_message,
         "question_created_at": q.question_created_at.isoformat() if q.question_created_at else None,
+        # Previous answer: relevant for REOPENED questions.
+        "answer_text": q.answer_text,
+        "answered_at": q.answered_at.isoformat() if q.answered_at else None,
     }
 
 
@@ -43,7 +56,8 @@ def serialize(q):
 def index():
     with SessionLocal() as session:
         questions = crud.get_answerable_questions(session, limit=MAX_LIMIT)
-        return render_template("index.html", questions=questions)
+        return render_template("index.html", questions=questions,
+                               min_length=ANSWER_MIN_LENGTH, max_length=ANSWER_MAX_LENGTH)
 
 
 @bp.get("/api/questions")
@@ -61,12 +75,14 @@ def answer():
     body = request.get_json(silent=True)
     if not isinstance(body, dict):
         return fail("INVALID_REQUEST", "Request body must be a JSON object.", 400)
-    question_id, text = body.get("question_id"), body.get("text")
+    question_id = body.get("question_id")
+    # "answer" is the documented field; "text" is still accepted for older clients.
+    text = body.get("answer", body.get("text"))
     # bool is an int subclass: reject true/false explicitly.
     if not isinstance(question_id, int) or isinstance(question_id, bool) or question_id < 1:
         return fail("INVALID_REQUEST", "question_id must be a positive integer.", 400)
     if not isinstance(text, str):
-        return fail("INVALID_REQUEST", "text must be a string.", 400)
+        return fail("INVALID_REQUEST", "answer must be a string.", 400)
 
     client = current_app.extensions.get("trendyol_client")
     with SessionLocal() as session:
