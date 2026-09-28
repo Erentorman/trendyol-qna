@@ -73,8 +73,13 @@ def test_upsert_closes_question_answered_elsewhere(session):
 def test_upsert_reopens_when_trendyol_reopens(session):
     crud.upsert_questions(session, [q(1, status="ANSWERED")])
     assert get(session, 1).local_status == "CLOSED"
-    crud.upsert_questions(session, [q(1, status="REJECTED")])
+    crud.upsert_questions(session, [q(1, status="WAITING_FOR_ANSWER")])
     assert get(session, 1).local_status == "REOPENED"
+
+
+def test_upsert_rejected_is_not_answerable(session):
+    crud.upsert_questions(session, [q(1, status="REJECTED")])
+    assert get(session, 1).local_status == "CLOSED"
 
 
 def test_upsert_keeps_failed_while_still_open(session):

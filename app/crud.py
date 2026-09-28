@@ -11,10 +11,11 @@ from sqlalchemy.orm import Session
 
 from app.models import Question
 
-# Trendyol statuses meaning "no answer needed from us any more".
-TRENDYOL_CLOSED = ("ANSWERED", "WAITING_FOR_APPROVE", "REPORTED")
-# Trendyol statuses meaning "this question still needs an answer".
-TRENDYOL_OPEN = ("WAITING_FOR_ANSWER", "REJECTED")
+# Official Trendyol QnA statuses (developers.trendyol.com, questions/filter).
+# Only WAITING_FOR_ANSWER can be answered; every other status is final for us.
+# REJECTED means the seller's answer was rejected; the question is not answerable.
+TRENDYOL_OPEN = ("WAITING_FOR_ANSWER",)
+TRENDYOL_CLOSED = ("ANSWERED", "REJECTED", "REPORTED", "UNANSWERED")
 
 # Columns whose source of truth is Trendyol; upsert refreshes only these.
 SOURCE_FIELDS = (
@@ -65,7 +66,7 @@ def upsert_questions(session: Session, items):
             & current.local_status.not_in(("ANSWERED", "CLOSED")),
             "CLOSED",
         ),
-        # Trendyol moved it back from closed to open (e.g. answer rejected).
+        # Trendyol moved it back from a closed status to WAITING_FOR_ANSWER.
         (
             new.trendyol_status.in_(TRENDYOL_OPEN)
             & current.trendyol_status.in_(TRENDYOL_CLOSED)
