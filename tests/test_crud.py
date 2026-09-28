@@ -1,5 +1,6 @@
+import pytest
 import threading
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
 
@@ -89,7 +90,8 @@ def test_upsert_reopens_failed_while_still_waiting_and_keeps_history(session):
     crud.mark_failed(session, row.id, "TIMEOUT", "timed out", retryable=True)
     crud.upsert_questions(session, [q(1)])  # identical payload, still WAITING_FOR_ANSWER
     row = get(session, 1)
-    assert (row.local_status, row.retry_count, row.error_code) == ("REOPENED", 1, "TIMEOUT")
+    # retry_count counts retries started, not failures: still 0 here.
+    assert (row.local_status, row.retry_count, row.error_code) == ("REOPENED", 0, "TIMEOUT")
 
 
 def test_upsert_reopens_answered_while_still_waiting_then_stays_reopened(session):
@@ -194,3 +196,141 @@ def test_mark_closed_only_from_answering(session):
     row = get(session, 1)
     assert (row.local_status, row.retryable, row.retry_count) == ("CLOSED", False, 0)
     assert crud.get_answerable_questions(session) == []
+
+
+
+def add_status(session, tid, status, **extra):
+    session.add(Question(trendyol_question_id=tid, question_text="?", local_status=status, **extra))
+    session.commit()
+    return get(session, tid)
+
+
+def fail_once(session, tid, code="SERVER_ERROR", retryable=True):
+    crud.upsert_questions(session, [q(tid)])
+    row_id = get(session, tid).id
+    assert crud.try_lock_for_answering(session, row_id)
+    assert crud.mark_failed(session, row_id, code, "msg", retryable=retryable)
+    return row_id
+
+
+def test_failed_retryable_lockable_non_retryable_not(session):
+    retryable_id = fail_once(session, 1, retryable=True)
+    final_id = fail_once(session, 2, code="FORBIDDEN_WORD", retryable=False)
+    assert crud.try_lock_for_answering(session, retryable_id) is True
+    assert crud.try_lock_for_answering(session, final_id) is False
+    assert get(session, 2).local_status == "FAILED"
+
+
+@pytest.mark.parametrize("status", ["ANSWERING", "ANSWERED", "CLOSED"])
+def test_terminal_and_busy_states_not_lockable_even_if_retryable(session, status):
+    row = add_status(session, 1, status, retryable=True)
+    assert crud.try_lock_for_answering(session, row.id) is False
+
+
+def test_lock_sets_locked_at_and_exits_clear_it(session):
+    for tid, finish in [(1, "answered"), (2, "failed"), (3, "closed")]:
+        crud.upsert_questions(session, [q(tid)])
+        row_id = get(session, tid).id
+        before = datetime.now(timezone.utc)
+        crud.try_lock_for_answering(session, row_id)
+        locked = get(session, tid).locked_at
+        assert locked is not None and locked >= before - timedelta(seconds=1)
+        if finish == "answered":
+            crud.mark_answered(session, row_id, "Evet, var.")
+        elif finish == "failed":
+            crud.mark_failed(session, row_id, "SERVER_ERROR", "m", retryable=True)
+        else:
+            crud.mark_closed(session, row_id, "QUESTION_ALREADY_ANSWERED", "m")
+        assert get(session, tid).locked_at is None
+
+
+def test_retry_count_counts_retries_and_survives_success(session):
+    crud.upsert_questions(session, [q(1)])
+    row_id = get(session, 1).id
+    crud.try_lock_for_answering(session, row_id)            # first attempt
+    assert get(session, 1).retry_count == 0
+    crud.mark_failed(session, row_id, "SERVER_ERROR", "m", retryable=True)
+    assert get(session, 1).retry_count == 0                   # failure alone is not a retry
+
+    crud.try_lock_for_answering(session, row_id)            # retry #1
+    assert get(session, 1).retry_count == 1
+    crud.mark_failed(session, row_id, "NETWORK_ERROR", "m", retryable=True)
+    crud.try_lock_for_answering(session, row_id)            # retry #2
+    assert get(session, 1).retry_count == 2
+
+    crud.mark_answered(session, row_id, "Evet, var.")
+    row = get(session, 1)
+    assert (row.local_status, row.retry_count, row.error_code, row.retryable) == (
+        "ANSWERED", 2, None, False)
+
+    crud.upsert_questions(session, [q(99)])
+    assert get(session, 99).retry_count == 0                  # brand new question
+
+
+def test_reclaim_only_stale_answering(session):
+    now = datetime.now(timezone.utc)
+    old = add_status(session, 1, "ANSWERING", locked_at=now - timedelta(minutes=11))
+    fresh = add_status(session, 2, "ANSWERING", locked_at=now - timedelta(minutes=2))
+    legacy = add_status(session, 3, "ANSWERING", locked_at=None)
+    other = add_status(session, 4, "FAILED", locked_at=None, retryable=False)
+
+    ids = crud.reclaim_stale_answering(session, now - timedelta(minutes=10))
+    assert sorted(ids) == sorted([old.id, legacy.id])
+
+    row = get(session, 1)
+    assert (row.local_status, row.retryable, row.error_code, row.locked_at) == (
+        "FAILED", True, crud.STALE_ANSWERING_CODE, None)
+    assert row.error_message == crud.STALE_ANSWERING_MESSAGE
+    assert get(session, 2).local_status == "ANSWERING"
+    assert get(session, 4).retryable is False and get(session, 4).local_status == "FAILED"
+
+    # Idempotent: nothing left to reclaim.
+    assert crud.reclaim_stale_answering(session, now - timedelta(minutes=10)) == []
+    # Reclaimed row is retryable: lock works and counts as a retry.
+    assert crud.try_lock_for_answering(session, old.id) is True
+    assert get(session, 1).retry_count == 1
+
+
+def test_reclaim_concurrent_runs_reclaim_once(Session):
+    import threading
+
+    with Session() as s:
+        for tid in range(1, 6):
+            s.add(Question(trendyol_question_id=tid, question_text="?", local_status="ANSWERING",
+                           locked_at=datetime.now(timezone.utc) - timedelta(hours=1)))
+        s.commit()
+
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=10)
+    barrier = threading.Barrier(4)
+    results = []
+
+    def run():
+        with Session() as s:
+            barrier.wait()
+            results.append(crud.reclaim_stale_answering(s, cutoff))
+
+    threads = [threading.Thread(target=run) for _ in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    all_ids = [i for r in results for i in r]
+    assert len(all_ids) == 5 and len(set(all_ids)) == 5   # each row reclaimed exactly once
+
+
+def test_mark_after_reclaim_is_refused(session):
+    crud.upsert_questions(session, [q(1)])
+    row_id = get(session, 1).id
+    crud.try_lock_for_answering(session, row_id)
+    crud.reclaim_stale_answering(session, datetime.now(timezone.utc) + timedelta(seconds=1))
+    assert crud.mark_answered(session, row_id, "Evet, var.") is False
+    assert get(session, 1).local_status == "FAILED"
+
+
+def test_answerable_list_includes_only_retryable_failed(session):
+    add_status(session, 1, "NEW")
+    add_status(session, 2, "REOPENED")
+    add_status(session, 3, "FAILED", retryable=True)
+    add_status(session, 4, "FAILED", retryable=False)
+    add_status(session, 5, "ANSWERING", retryable=True)
+    assert sorted(r.trendyol_question_id for r in crud.get_answerable_questions(session)) == [1, 2, 3]

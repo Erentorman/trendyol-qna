@@ -20,11 +20,13 @@ TERMINAL_CODES = (ErrorCode.QUESTION_ALREADY_ANSWERED, ErrorCode.TIME_LIMIT_EXCE
 class AnswerError(Exception):
     """Failure safe to show to the frontend (normalized code + message, no raw body)."""
 
-    def __init__(self, code, message, http_status):
+    def __init__(self, code, message, http_status, retryable=False):
         super().__init__(f"{code}: {message}")
         self.code = code
         self.message = message
         self.http_status = http_status
+        # True only when the question is now FAILED+retryable, i.e. can be sent again.
+        self.retryable = retryable
 
 
 def submit_answer(session, client, question_id, text):
@@ -56,22 +58,35 @@ def submit_answer(session, client, question_id, text):
     except TrendyolError as exc:
         session.rollback()
         if exc.code in TERMINAL_CODES:
-            crud.mark_closed(session, question_id, exc.code, exc.message)
+            _check(crud.mark_closed(session, question_id, exc.code, exc.message),
+                   question_id, "CLOSED")
             logger.info("Question %s closed by Trendyol: %s", question_id, exc.code)
-        else:
-            crud.mark_failed(session, question_id, exc.code, exc.message, exc.retryable)
-            logger.warning("Answer for question %s failed: %s (retryable=%s)",
-                           question_id, exc.code, exc.retryable)
-        raise AnswerError(exc.code, exc.message, 502 if exc.retryable else 422) from None
+            raise AnswerError(exc.code, exc.message, 422) from None
+        _check(crud.mark_failed(session, question_id, exc.code, exc.message, exc.retryable),
+               question_id, "FAILED")
+        logger.warning("Answer for question %s failed: %s (retryable=%s)",
+                       question_id, exc.code, exc.retryable)
+        raise AnswerError(exc.code, exc.message, 502 if exc.retryable else 422,
+                          retryable=exc.retryable) from None
     except Exception:
         session.rollback()
         logger.exception("Unexpected error while answering question %s", question_id)
-        crud.mark_failed(session, question_id, "INTERNAL_ERROR",
-                         "Unexpected error while sending the answer.", retryable=True)
+        _check(crud.mark_failed(session, question_id, "INTERNAL_ERROR",
+                                "Unexpected error while sending the answer.", retryable=True),
+               question_id, "FAILED")
         raise AnswerError("INTERNAL_ERROR", "Unexpected error while sending the answer.",
-                          500) from None
+                          500, retryable=True) from None
 
-    crud.mark_answered(session, question_id, text, result["answer_id"])
+    _check(crud.mark_answered(session, question_id, text, result["answer_id"]),
+           question_id, "ANSWERED")
     logger.info("Question %s answered (answer_id=%s)", question_id, result["answer_id"])
     return {"question_id": question_id, "local_status": "ANSWERED",
             "answer_id": result["answer_id"]}
+
+
+def _check(moved, question_id, target):
+    # False means the question left ANSWERING without us, e.g. the stale-lock reclaim ran
+    # while this request was still waiting for Trendyol. Keep the DB state; just surface it.
+    if not moved:
+        logger.error("Question %s was no longer ANSWERING; could not mark it %s",
+                     question_id, target)

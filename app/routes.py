@@ -28,8 +28,8 @@ def ok(data, status=200):
     return jsonify(ok=True, data=data), status
 
 
-def fail(code, message, status):
-    return jsonify(ok=False, error={"code": code, "message": message}), status
+def fail(code, message, status, **extra):
+    return jsonify(ok=False, error={"code": code, "message": message, **extra}), status
 
 
 def serialize(q):
@@ -43,6 +43,7 @@ def serialize(q):
         "trendyol_status": q.trendyol_status,
         "local_status": q.local_status,
         "retry_count": q.retry_count,
+        "retryable": q.retryable,
         "error_code": q.error_code,
         "error_message": q.error_message,
         "question_created_at": q.question_created_at.isoformat() if q.question_created_at else None,
@@ -89,7 +90,8 @@ def answer():
         try:
             return ok(submit_answer(session, client, question_id, text))
         except AnswerError as exc:
-            return fail(exc.code, exc.message, exc.http_status)
+            # retryable lets the UI offer "try again" on the same card.
+            return fail(exc.code, exc.message, exc.http_status, retryable=exc.retryable)
 
 
 def register_error_handlers(app):

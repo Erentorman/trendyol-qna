@@ -18,6 +18,9 @@ h1 { font-size: 1.35rem; margin: 0; }
           background: #eef1f4; color: var(--muted); }
 .status-reopened { background: var(--warn-bg); color: var(--warn); }
 .status-answered { background: var(--ok-bg); color: var(--ok); }
+.status-failed { background: var(--err-bg); color: var(--err); }
+.previous.is-retry { background: var(--err-bg); }
+.previous.is-retry .previous-title { color: var(--err); }
 .question { font-size: 1.02rem; margin: 10px 0 4px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .meta { color: var(--muted); font-size: .85rem; margin: 0 0 12px; }
 .previous { background: var(--warn-bg); border-radius: 8px; padding: 8px 12px; margin-bottom: 12px; font-size: .9rem; }

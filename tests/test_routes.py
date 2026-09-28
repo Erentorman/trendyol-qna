@@ -137,7 +137,7 @@ def test_invalid_request(make_app, Session, payload):
 
 @pytest.mark.parametrize("status", ["ANSWERING", "ANSWERED", "CLOSED", "FAILED"])
 def test_not_answerable_states_return_already_locked(Session, make_app, status):
-    qid = add(Session, status)
+    qid = add(Session, status)  # FAILED here has retryable=False (column default)
     fake = FakeTrendyol()
     resp = post(make_app(fake), qid)
     assert resp.status_code == 409 and resp.get_json()["error"]["code"] == "ALREADY_LOCKED"
@@ -154,10 +154,11 @@ def test_retryable_error_marks_failed_retryable(Session, make_app):
     err = TrendyolError(ErrorCode.SERVER_ERROR, retryable=True, status_code=503)
     resp = post(make_app(FakeTrendyol(error=err)), qid)
     assert resp.status_code == 502
-    assert resp.get_json()["error"] == {"code": "SERVER_ERROR", "message": err.message}
+    assert resp.get_json()["error"] == {"code": "SERVER_ERROR", "message": err.message,
+                                        "retryable": True}
     q = load(Session, qid)
-    assert (q.local_status, q.retryable, q.error_code, q.retry_count) == (
-        "FAILED", True, "SERVER_ERROR", 1)
+    assert (q.local_status, q.retryable, q.error_code, q.retry_count, q.locked_at) == (
+        "FAILED", True, "SERVER_ERROR", 0, None)
 
 
 def test_non_retryable_error_marks_failed(Session, make_app):
@@ -165,6 +166,7 @@ def test_non_retryable_error_marks_failed(Session, make_app):
     err = TrendyolError(ErrorCode.FORBIDDEN_WORD, status_code=400)
     resp = post(make_app(FakeTrendyol(error=err)), qid)
     assert resp.status_code == 422
+    assert resp.get_json()["error"]["retryable"] is False
     q = load(Session, qid)
     assert (q.local_status, q.retryable, q.error_code) == ("FAILED", False, "FORBIDDEN_WORD")
 
@@ -206,7 +208,8 @@ def test_unexpected_exception_is_normalized_and_releases_lock(Session, make_app)
     resp = post(make_app(fake), qid)
     assert resp.status_code == 500
     assert resp.get_json() == {"ok": False, "error": {
-        "code": "INTERNAL_ERROR", "message": "Unexpected error while sending the answer."}}
+        "code": "INTERNAL_ERROR", "message": "Unexpected error while sending the answer.",
+        "retryable": True}}
     assert "TY-SECRET-VALUE" not in resp.get_data(as_text=True)
     q = load(Session, qid)
     assert (q.local_status, q.retryable, q.error_code) == ("FAILED", True, "INTERNAL_ERROR")
@@ -254,3 +257,25 @@ def test_legacy_text_field_still_accepted(Session, make_app):
     resp = make_app(FakeTrendyol()).test_client().post(
         "/api/answer", json={"question_id": qid, "text": VALID})
     assert resp.status_code == 200
+
+
+def test_retryable_failed_can_be_answered_again_via_api(Session, make_app):
+    qid = add(Session)
+    err = TrendyolError(ErrorCode.NETWORK_ERROR, retryable=True)
+    assert post(make_app(FakeTrendyol(error=err)), qid).status_code == 502
+
+    fake = FakeTrendyol()
+    resp = post(make_app(fake), qid)
+    assert resp.status_code == 200 and len(fake.calls) == 1
+    q = load(Session, qid)
+    assert (q.local_status, q.retry_count, q.error_code, q.locked_at) == ("ANSWERED", 1, None, None)
+
+
+def test_api_questions_includes_retryable_failed_only(Session, make_app):
+    with Session() as s:
+        for tid, retryable in [(1, True), (2, False)]:
+            s.add(Question(trendyol_question_id=tid, question_text="?", local_status="FAILED",
+                           retryable=retryable, error_code="SERVER_ERROR"))
+        s.commit()
+    data = make_app(None).test_client().get("/api/questions").get_json()["data"]
+    assert [(d["trendyol_question_id"], d["retryable"]) for d in data] == [(1, True)]

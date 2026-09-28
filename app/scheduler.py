@@ -8,7 +8,7 @@ import atexit
 import logging
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from apscheduler.schedulers.background import BackgroundScheduler
 
@@ -21,6 +21,11 @@ from app.trendyol_client import MAX_PAGE_SIZE, TrendyolError
 logger = logging.getLogger(__name__)
 
 POLL_JOB_ID = "poll_questions"
+RECLAIM_JOB_ID = "reclaim_stale_answering"
+# A real answer request ends within ~1.5 min (3 attempts x 25s + backoff); 10 min
+# without leaving ANSWERING means the owning process died or its DB write was lost.
+STALE_ANSWERING_AFTER = timedelta(minutes=10)
+RECLAIM_INTERVAL_SECONDS = 60
 DEFAULT_POLL_INTERVAL_SECONDS = 300
 # Hard stop against a misbehaving totalPages: 200 * 50 = 10,000 waiting questions.
 MAX_PAGES = 200
@@ -96,6 +101,16 @@ def _run_poll(client, session_factory, page_size):
         return run
 
 
+def reclaim_job(session_factory=SessionLocal, max_age=STALE_ANSWERING_AFTER):
+    """Move ANSWERING rows older than `max_age` to FAILED (retryable). Never raises."""
+    try:
+        with session_factory() as session:
+            return crud.reclaim_stale_answering(session, datetime.now(timezone.utc) - max_age)
+    except Exception:
+        logger.exception("Stale ANSWERING reclaim failed")
+        return None
+
+
 def start_scheduler(client, interval_seconds=None, session_factory=SessionLocal, paused=False):
     """Start the process-wide BackgroundScheduler once; later calls return the same one."""
     global _scheduler
@@ -118,6 +133,17 @@ def start_scheduler(client, interval_seconds=None, session_factory=SessionLocal,
             max_instances=1,  # a slow poll is never overlapped by the next one
             coalesce=True,  # missed runs collapse into one instead of a burst
             next_run_time=datetime.now(timezone.utc),  # first poll right away
+        )
+        # Separate, light job: recovery must not depend on Trendyol being reachable.
+        scheduler.add_job(
+            reclaim_job,
+            "interval",
+            seconds=RECLAIM_INTERVAL_SECONDS,
+            id=RECLAIM_JOB_ID,
+            args=[session_factory],
+            max_instances=1,
+            coalesce=True,
+            next_run_time=datetime.now(timezone.utc),  # recover leftovers right at startup
         )
         scheduler.start(paused=paused)
         atexit.register(stop_scheduler)

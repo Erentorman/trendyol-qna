@@ -184,3 +184,33 @@ test("non-JSON response and network failure are normalized", async () => {
   const down = await ui.postAnswer(async () => { throw new TypeError("Failed to fetch"); }, 1, VALID);
   assert.deepEqual(down, { ok: false, error: { code: "CLIENT_NETWORK" } });
 });
+
+test("retryable backend error keeps the card open for another try", async () => {
+  const f = deferredFetch();
+  const c = setup(f.fetchImpl);
+  type(c, VALID);
+  let p = c.form.fire("submit");
+  f.respond({ ok: false, error: { code: "SERVER_ERROR", message: "m", retryable: true } });
+  await p;
+  assert.equal(c.message.textContent, ui.MESSAGES.SERVER_ERROR);
+  assert.equal(c.button.disabled, false);
+  assert.equal(c.textarea.readOnly, false);
+  assert.ok(!c.card.classList.contains("is-done"));
+
+  p = c.form.fire("submit");                     // second attempt goes out
+  f.respond({ ok: true, data: {} });
+  await p;
+  assert.equal(f.calls.length, 2);
+  assert.equal(c.status.textContent, "ANSWERED");
+});
+
+test("non-retryable backend error closes the card", async () => {
+  const f = deferredFetch();
+  const c = setup(f.fetchImpl);
+  type(c, VALID);
+  const p = c.form.fire("submit");
+  f.respond({ ok: false, error: { code: "ALREADY_LOCKED", message: "m", retryable: false } });
+  await p;
+  assert.equal(c.button.disabled, true);
+  assert.ok(c.card.classList.contains("is-done"));
+});

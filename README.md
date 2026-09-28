@@ -98,3 +98,15 @@ Frontend birim testleri Node'un yerleşik test aracıyla çalışır (npm paketi
 ```bash
 node --test tests/js/app.test.js
 ```
+
+## Faz 6 — Dayanıklılık
+
+- **Retryable hatalar** (timeout, ağ, 5xx, 429, beklenmeyen sunucu hatası) soruyu
+  `FAILED + retryable=true` yapar; soru listede kalır ve hemen tekrar cevaplanabilir.
+  Kalıcı hatalar (yasaklı kelime, yetki vb.) `retryable=false` olur ve listede görünmez.
+- **`retry_count`** başlatılan tekrar deneme sayısıdır: önceki denemesi hatayla biten bir
+  soru yeniden kilitlendiğinde 1 artar; başarılı cevapta korunur.
+- **Takılı `ANSWERING` kurtarma:** scheduler her 60 sn'de bir, 10 dakikadan uzun süredir
+  `ANSWERING` olan soruları `FAILED + retryable=true` (`STALE_ANSWERING`) yapar.
+
+Migration: `alembic upgrade head` (`questions.locked_at` kolonu eklenir).

@@ -75,3 +75,16 @@ def test_frontend_js_unit_tests():
     result = subprocess.run(["node", "--test", str(ROOT / "tests/js/app.test.js")],
                             capture_output=True, text=True, timeout=60)
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_retryable_failed_card_shown_non_retryable_hidden(Session, make_app):
+    retry_id = add(Session, trendyol_question_id=1, local_status="FAILED", retryable=True,
+                   error_code="SERVER_ERROR", retry_count=2)
+    final_id = add(Session, trendyol_question_id=2, local_status="FAILED", retryable=False,
+                   error_code="FORBIDDEN_WORD")
+    html = get_index(make_app)
+    card = card_html(html, retry_id)
+    assert "FAILED · TEKRAR DENENEBİLİR" in card
+    assert "Son hata: SERVER_ERROR · 2. tekrar denemeden sonra" in card
+    assert "<textarea" in card
+    assert f'data-question-id="{final_id}"' not in html

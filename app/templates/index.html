@@ -16,7 +16,7 @@
     {% for q in questions %}
     <article class="card" data-question-id="{{ q.id }}" data-status="{{ q.local_status }}">
       <div class="card-head">
-        <span class="status status-{{ q.local_status|lower }}">{{ q.local_status }}</span>
+        <span class="status status-{{ q.local_status|lower }}">{{ "FAILED · TEKRAR DENENEBİLİR" if q.local_status == "FAILED" else q.local_status }}</span>
         <span class="product">{{ q.product_name or "Ürün bilgisi yok" }}</span>
       </div>
       <p class="question">{{ q.question_text }}</p>
@@ -37,6 +37,13 @@
         {% if q.error_code %}
         <p class="previous-date">Son hata: {{ q.error_code }}</p>
         {% endif %}
+      </div>
+      {% endif %}
+
+      {% if q.local_status == "FAILED" %}
+      <div class="previous is-retry" data-role="retry">
+        <p class="previous-title">Önceki gönderim başarısız oldu — tekrar deneyebilirsiniz.</p>
+        <p class="previous-date">Son hata: {{ q.error_code or "bilinmiyor" }}{% if q.retry_count %} · {{ q.retry_count }}. tekrar denemeden sonra{% endif %}</p>
       </div>
       {% endif %}
 

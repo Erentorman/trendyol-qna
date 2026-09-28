@@ -7,7 +7,14 @@ from sqlalchemy import func, select
 from app import scheduler as sched_mod
 from app.config import ConfigError
 from app.models import PollRun, Question
-from app.scheduler import POLL_JOB_ID, poll_job, start_scheduler, stop_scheduler
+from app.scheduler import (
+    POLL_JOB_ID,
+    RECLAIM_JOB_ID,
+    poll_job,
+    reclaim_job,
+    start_scheduler,
+    stop_scheduler,
+)
 from app.trendyol_client import ErrorCode, TrendyolError
 
 
@@ -151,7 +158,7 @@ def test_scheduler_started_only_once_per_process(clean_scheduler, caplog):
     first = start_scheduler(FakeClient([]), interval_seconds=60, paused=True)
     second = start_scheduler(FakeClient([]), interval_seconds=5, paused=True)
     assert first is second
-    assert len(first.get_jobs()) == 1
+    assert {j.id for j in first.get_jobs()} == {POLL_JOB_ID, RECLAIM_JOB_ID}
     assert first.get_job(POLL_JOB_ID).trigger.interval == timedelta(seconds=60)
     assert "already running" in caplog.text
 
@@ -161,3 +168,35 @@ def test_scheduler_default_and_invalid_interval(clean_scheduler):
         start_scheduler(FakeClient([]), interval_seconds=0, paused=True)
     scheduler = start_scheduler(FakeClient([]), interval_seconds=None, paused=True)
     assert scheduler.get_job(POLL_JOB_ID).trigger.interval == timedelta(seconds=300)
+
+
+def test_reclaim_job_registered_every_minute(clean_scheduler):
+    scheduler = start_scheduler(FakeClient([]), interval_seconds=300, paused=True)
+    job = scheduler.get_job(RECLAIM_JOB_ID)
+    assert job.trigger.interval == timedelta(seconds=60)
+    assert job.max_instances == 1 and job.func is reclaim_job
+
+
+def test_reclaim_job_uses_ten_minute_threshold(Session, caplog):
+    now = datetime.now(timezone.utc)
+    with Session() as s:
+        s.add_all([
+            Question(trendyol_question_id=1, question_text="?", local_status="ANSWERING",
+                     locked_at=now - timedelta(minutes=10, seconds=5)),
+            Question(trendyol_question_id=2, question_text="?", local_status="ANSWERING",
+                     locked_at=now - timedelta(minutes=9)),
+        ])
+        s.commit()
+    caplog.set_level(logging.INFO)
+    ids = reclaim_job(Session)
+    assert len(ids) == 1
+    assert "Reclaimed 1 stale ANSWERING" in caplog.text
+    assert reclaim_job(Session) == []
+
+
+def test_reclaim_job_survives_db_failure(caplog):
+    def broken():
+        raise RuntimeError("db down")
+
+    assert reclaim_job(broken) is None
+    assert "reclaim failed" in caplog.text

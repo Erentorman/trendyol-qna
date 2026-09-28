@@ -5,11 +5,16 @@ Status transitions are single conditional UPDATEs, so they are safe when several
 workers/processes touch the same row concurrently.
 """
 
-from sqlalchemy import case, func, literal_column, select, update
+import logging
+from datetime import datetime, timezone
+
+from sqlalchemy import and_, case, func, literal_column, or_, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from app.models import Question
+
+logger = logging.getLogger(__name__)
 
 # Official Trendyol QnA statuses (developers.trendyol.com, questions/filter).
 # Only WAITING_FOR_ANSWER can be answered; every other status is final for us.
@@ -17,8 +22,25 @@ from app.models import Question
 TRENDYOL_OPEN = ("WAITING_FOR_ANSWER",)
 TRENDYOL_CLOSED = ("ANSWERED", "REJECTED", "REPORTED", "UNANSWERED")
 
-# Local statuses a user may answer (and try_lock_for_answering may claim).
+# Local statuses a user may always answer. FAILED is answerable only when retryable.
 ANSWERABLE_STATUSES = ("NEW", "REOPENED")
+
+STALE_ANSWERING_CODE = "STALE_ANSWERING"
+STALE_ANSWERING_MESSAGE = (
+    "Answering did not finish (process crash or timeout); the question can be retried."
+)
+
+
+def _answerable():
+    """SQL condition for 'a user may claim this question now'. Shared by list and lock."""
+    return or_(
+        Question.local_status.in_(ANSWERABLE_STATUSES),
+        and_(Question.local_status == "FAILED", Question.retryable.is_(True)),
+    )
+
+
+def _utcnow():
+    return datetime.now(timezone.utc)
 
 # Columns whose source of truth is Trendyol; upsert refreshes only these.
 SOURCE_FIELDS = (
@@ -115,10 +137,10 @@ def get_new_questions(session: Session, limit=50):
 
 
 def get_answerable_questions(session: Session, limit=50):
-    """Oldest-first NEW and REOPENED questions (what a user can answer)."""
+    """Oldest-first NEW, REOPENED and retryable FAILED questions (what a user can answer)."""
     stmt = (
         select(Question)
-        .where(Question.local_status.in_(ANSWERABLE_STATUSES))
+        .where(_answerable())
         .order_by(Question.question_created_at.asc().nulls_last(), Question.id)
         .limit(limit)
     )
@@ -126,21 +148,34 @@ def get_answerable_questions(session: Session, limit=50):
 
 
 def try_lock_for_answering(session: Session, question_id):
-    """Atomically claim a NEW/REOPENED question. Returns True only for the single winner.
+    """Atomically claim an answerable question. Returns True only for the single winner.
 
-    UPDATE ... WHERE local_status IN ('NEW', 'REOPENED') is check-and-set in one
-    statement: a concurrent second UPDATE waits on the row lock, re-checks the WHERE
+    Claimable: NEW, REOPENED, FAILED with retryable=True. The check and the change are
+    one UPDATE: a concurrent second UPDATE waits on the row lock, re-checks the WHERE
     against the committed row (now ANSWERING), matches nothing and returns no row.
+
+    retry_count counts retries: it is incremented when the claimed question's previous
+    attempt ended in an error (error_code is still set until an answer succeeds).
     """
     stmt = (
         update(Question)
-        .where(Question.id == question_id, Question.local_status.in_(ANSWERABLE_STATUSES))
-        .values(local_status="ANSWERING")
-        .returning(Question.id)
+        .where(Question.id == question_id, _answerable())
+        .values(
+            local_status="ANSWERING",
+            locked_at=_utcnow(),
+            retry_count=case(
+                (Question.error_code.is_not(None), Question.retry_count + 1),
+                else_=Question.retry_count,
+            ),
+        )
+        .returning(Question.retry_count, Question.error_code)
     )
-    locked = session.execute(stmt).first() is not None
+    row = session.execute(stmt).first()
     session.commit()
-    return locked
+    if row is not None and row.error_code is not None:
+        logger.info("Retrying question %s after %s (retry_count=%s)",
+                    question_id, row.error_code, row.retry_count)
+    return row is not None
 
 
 def mark_answered(session: Session, question_id, answer_text, answer_id=None):
@@ -150,6 +185,7 @@ def mark_answered(session: Session, question_id, answer_text, answer_id=None):
         .where(Question.id == question_id, Question.local_status == "ANSWERING")
         .values(
             local_status="ANSWERED",
+            locked_at=None,
             answer_text=answer_text,
             answer_id=answer_id,
             answered_at=func.now(),
@@ -165,16 +201,20 @@ def mark_answered(session: Session, question_id, answer_text, answer_id=None):
 
 
 def mark_failed(session: Session, question_id, error_code, error_message, retryable):
-    """ANSWERING -> FAILED, incrementing retry_count. Returns False if not ANSWERING."""
+    """ANSWERING -> FAILED. `retryable` decides whether it may be claimed again.
+
+    retry_count is not touched here; it grows when a retry actually starts (see lock).
+    Returns False if the question was not ANSWERING (e.g. already reclaimed).
+    """
     stmt = (
         update(Question)
         .where(Question.id == question_id, Question.local_status == "ANSWERING")
         .values(
             local_status="FAILED",
+            locked_at=None,
             error_code=error_code,
             error_message=error_message,
             retryable=retryable,
-            retry_count=Question.retry_count + 1,
         )
         .returning(Question.id)
     )
@@ -191,6 +231,7 @@ def mark_closed(session: Session, question_id, error_code, error_message):
         .where(Question.id == question_id, Question.local_status == "ANSWERING")
         .values(
             local_status="CLOSED",
+            locked_at=None,
             error_code=error_code,
             error_message=error_message,
             retryable=False,
@@ -200,3 +241,33 @@ def mark_closed(session: Session, question_id, error_code, error_message):
     ok = session.execute(stmt).first() is not None
     session.commit()
     return ok
+
+
+def reclaim_stale_answering(session: Session, cutoff):
+    """ANSWERING rows locked before `cutoff` -> FAILED (retryable). Returns reclaimed ids.
+
+    Covers a crashed process or a lost DB write after the lock. A single conditional
+    UPDATE: safe to run concurrently or repeatedly (a reclaimed row is no longer
+    ANSWERING, so a second run matches nothing). Rows with a NULL locked_at predate
+    the column and are treated as stale.
+    """
+    stmt = (
+        update(Question)
+        .where(
+            Question.local_status == "ANSWERING",
+            or_(Question.locked_at < cutoff, Question.locked_at.is_(None)),
+        )
+        .values(
+            local_status="FAILED",
+            locked_at=None,
+            retryable=True,
+            error_code=STALE_ANSWERING_CODE,
+            error_message=STALE_ANSWERING_MESSAGE,
+        )
+        .returning(Question.id)
+    )
+    ids = list(session.execute(stmt).scalars())
+    session.commit()
+    if ids:
+        logger.warning("Reclaimed %s stale ANSWERING question(s): %s", len(ids), ids)
+    return ids

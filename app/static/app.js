@@ -19,13 +19,13 @@
     QUESTION_ALREADY_ANSWERED: "Bu soru Trendyol'da zaten cevaplanmış; soru kapatıldı.",
     TIME_LIMIT_EXCEEDED: "Bu sorunun cevaplama süresi dolmuş; soru kapatıldı.",
     FORBIDDEN_WORD: "Cevap Trendyol'un yasaklı kelime kontrolüne takıldı. Trendyol hâlâ cevap bekliyorsa soru bir sonraki senkronizasyonda tekrar açılır; cevabı düzenleyip yeniden gönderebilirsiniz.",
-    RATE_LIMITED: "Trendyol istek limiti aşıldı. Soru bir sonraki senkronizasyonda tekrar açılacak; birkaç dakika sonra yeniden deneyin.",
-    SERVER_ERROR: "Trendyol şu anda yanıt vermiyor. Soru bir sonraki senkronizasyonda tekrar açılacak.",
-    NETWORK_ERROR: "Trendyol'a bağlanılamadı (zaman aşımı). Soru bir sonraki senkronizasyonda tekrar açılacak.",
+    RATE_LIMITED: "Trendyol istek limiti aşıldı. Birkaç dakika bekleyip tekrar deneyin.",
+    SERVER_ERROR: "Trendyol şu anda yanıt vermiyor. Biraz sonra tekrar deneyebilirsiniz.",
+    NETWORK_ERROR: "Trendyol'a bağlanılamadı (zaman aşımı). Biraz sonra tekrar deneyebilirsiniz.",
     AUTH_ERROR: "Trendyol API kimlik bilgileri reddedildi. Yöneticiye haber verin.",
     TRENDYOL_NOT_CONFIGURED: "Trendyol API ayarları eksik; cevap gönderilemiyor.",
     QUESTION_NOT_FOUND: "Soru bulunamadı. Sayfayı yenileyin.",
-    INTERNAL_ERROR: "Beklenmeyen bir sunucu hatası oluştu.",
+    INTERNAL_ERROR: "Beklenmeyen bir sunucu hatası oluştu. Tekrar deneyebilirsiniz.",
     CLIENT_NETWORK: "Sunucuya ulaşılamadı. Cevabın gidip gitmediğini görmek için sayfayı yenileyin.",
     CLIENT_TIMEOUT: "Sunucu zamanında yanıt vermedi. Cevabın gidip gitmediğini görmek için sayfayı yenileyin.",
     BAD_RESPONSE: "Sunucudan beklenmeyen bir yanıt geldi. Sayfayı yenileyin.",
@@ -33,8 +33,9 @@
   };
 
   // Errors returned BEFORE the backend took the lock: state is unchanged, the user
-  // can fix the text and resend from the same card. Any other error means the
-  // question moved on (FAILED/CLOSED/locked) or its state is unknown.
+  // can fix the text and resend from the same card. After the lock, the backend says
+  // whether the question is now FAILED+retryable (error.retryable). Anything else means
+  // the question moved on (non-retryable FAILED/CLOSED/locked) or its state is unknown.
   const EDITABLE_ERRORS = new Set([
     "EMPTY_ANSWER", "ANSWER_TOO_SHORT", "ANSWER_TOO_LONG", "INVALID_REQUEST",
     "TRENDYOL_NOT_CONFIGURED",
@@ -157,7 +158,7 @@
       }
 
       const code = result.error && result.error.code;
-      if (EDITABLE_ERRORS.has(code)) {
+      if (EDITABLE_ERRORS.has(code) || (result.error && result.error.retryable === true)) {
         setLoading(false);
         refresh();
       } else {
