@@ -27,3 +27,21 @@ DB erişilemezse `/health` 503 ve `{"status": "error", "database": "unavailable"
 
 > macOS'ta 5000 portu AirPlay Receiver tarafından kullanılıyor olabilir.
 > Bu durumda AirPlay Receiver'ı kapatın veya `PORT=5001 python run.py` ile başlatın.
+
+## Faz 1 — Veritabanı şeması ve CRUD
+
+```bash
+pip install -r requirements-dev.txt        # pytest dahil
+alembic upgrade head                        # questions + poll_runs tablolarını oluşturur
+
+# Testler ayrı bir *_test veritabanı kullanır (tablolar her testte temizlenir)
+docker compose exec db createdb -U trendyol trendyol_qna_test
+pytest -q
+```
+
+Model değişikliğinden sonra yeni migration:
+
+```bash
+alembic revision --autogenerate -m "açıklama"   # üretilen dosyayı gözden geçirin
+alembic upgrade head
+```
