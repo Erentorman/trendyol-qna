@@ -165,8 +165,9 @@ class TrendyolClient:
         self._sleep = sleep  # injectable so tests don't actually wait
         self._session = session or requests.Session()
         self._session.auth = (api_key, api_secret)  # HTTP Basic; never logged
+        self.user_agent = user_agent or f"{self.supplier_id} - SelfIntegration"  # not a secret
         self._session.headers.update({
-            "User-Agent": user_agent or f"{self.supplier_id} - SelfIntegration",
+            "User-Agent": self.user_agent,
             "Accept": "application/json",
         })
 

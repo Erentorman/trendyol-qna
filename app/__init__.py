@@ -35,4 +35,8 @@ def create_app(config=None, trendyol_client=None):
 
     app.register_blueprint(bp)
     register_error_handlers(app)
+
+    from app.cli import qna_cli
+
+    app.cli.add_command(qna_cli)
     return app
