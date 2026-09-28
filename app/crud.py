@@ -57,6 +57,11 @@ def upsert_questions(session: Session, items):
     new = stmt.excluded
     current = Question.__table__.c
 
+    # Trendyol still (or again) waits for an answer, but locally we consider it done or
+    # failed: flag it for attention. REOPENED is never turned back into NEW here.
+    reopen = new.trendyol_status.in_(TRENDYOL_OPEN) & current.local_status.in_(
+        ("ANSWERED", "FAILED", "CLOSED")
+    )
     local_status = case(
         # Someone is answering right now: only mark_answered/mark_failed may move it.
         (current.local_status == "ANSWERING", current.local_status),
@@ -66,13 +71,7 @@ def upsert_questions(session: Session, items):
             & current.local_status.not_in(("ANSWERED", "CLOSED")),
             "CLOSED",
         ),
-        # Trendyol moved it back from a closed status to WAITING_FOR_ANSWER.
-        (
-            new.trendyol_status.in_(TRENDYOL_OPEN)
-            & current.trendyol_status.in_(TRENDYOL_CLOSED)
-            & current.local_status.in_(("ANSWERED", "CLOSED")),
-            "REOPENED",
-        ),
+        (reopen, "REOPENED"),
         else_=current.local_status,
     )
 
@@ -84,9 +83,11 @@ def upsert_questions(session: Session, items):
             "updated_at": func.now(),
         },
         # Skip no-op updates so updated_at and the "updated" count stay meaningful.
+        # `reopen` must be included: it can fire while Trendyol's data is unchanged.
         where=(
             current.raw_payload.is_distinct_from(new.raw_payload)
             | current.trendyol_status.is_distinct_from(new.trendyol_status)
+            | reopen
         ),
     ).returning(
         # xmax = 0 only for freshly inserted tuples; updated ones carry the updating txid.

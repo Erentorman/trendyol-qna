@@ -45,3 +45,25 @@ Model değişikliğinden sonra yeni migration:
 alembic revision --autogenerate -m "açıklama"   # üretilen dosyayı gözden geçirin
 alembic upgrade head
 ```
+
+## Faz 3 — Periyodik polling
+
+`python run.py`, `.env` içindeki `TY_*` değerleri doluysa bir `BackgroundScheduler` başlatır:
+her `POLL_INTERVAL_SECONDS` saniyede (boşsa 300) Trendyol'daki tüm `WAITING_FOR_ANSWER`
+sayfaları çekilir, `questions` tablosuna upsert edilir ve her çalışma `poll_runs`
+tablosuna metrikleriyle yazılır. `TY_*` eksikse uygulama çalışır ama poller devre dışı kalır
+(logda `Poller disabled` uyarısı).
+
+Son poll'ları görmek için:
+
+```bash
+docker compose exec db psql -U trendyol -d trendyol_qna \
+  -c "SELECT id, status, fetched_count, inserted_count, updated_count, duration_ms, error_message
+      FROM poll_runs ORDER BY id DESC LIMIT 10"
+```
+
+> **Production notu:** Scheduler, uygulama sürecinin içinde çalışır ve tek süreç varsayar.
+> Çoklu Gunicorn worker ortamında her worker kendi scheduler'ını başlatır ve aynı poll
+> birden fazla kez çalışır. Production'da poller ayrı bir process/service olarak
+> çalıştırılmalı **veya** poll başında PostgreSQL advisory lock
+> (`pg_try_advisory_lock`) alınarak tek poller garanti edilmelidir.

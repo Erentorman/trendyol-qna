@@ -82,14 +82,30 @@ def test_upsert_rejected_is_not_answerable(session):
     assert get(session, 1).local_status == "CLOSED"
 
 
-def test_upsert_keeps_failed_while_still_open(session):
+def test_upsert_reopens_failed_while_still_waiting_and_keeps_history(session):
     crud.upsert_questions(session, [q(1)])
     row = get(session, 1)
     crud.try_lock_for_answering(session, row.id)
     crud.mark_failed(session, row.id, "TIMEOUT", "timed out", retryable=True)
-    crud.upsert_questions(session, [q(1, text="değişti")])
+    crud.upsert_questions(session, [q(1)])  # identical payload, still WAITING_FOR_ANSWER
     row = get(session, 1)
-    assert (row.local_status, row.retry_count, row.error_code) == ("FAILED", 1, "TIMEOUT")
+    assert (row.local_status, row.retry_count, row.error_code) == ("REOPENED", 1, "TIMEOUT")
+
+
+def test_upsert_reopens_answered_while_still_waiting_then_stays_reopened(session):
+    crud.upsert_questions(session, [q(1)])
+    row_id = get(session, 1).id
+    crud.try_lock_for_answering(session, row_id)
+    crud.mark_answered(session, row_id, "Evet, var.", answer_id=5)
+
+    assert crud.upsert_questions(session, [q(1)]) == {"inserted": 0, "updated": 1}
+    row = get(session, 1)
+    assert (row.local_status, row.answer_text) == ("REOPENED", "Evet, var.")
+
+    # Next poll: REOPENED is kept (not turned into NEW) and counts as no-op.
+    assert crud.upsert_questions(session, [q(1)]) == {"inserted": 0, "updated": 0}
+    assert get(session, 1).local_status == "REOPENED"
+    assert crud.get_new_questions(session) == []
 
 
 def test_get_new_questions_oldest_first(session):
