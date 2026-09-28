@@ -141,6 +141,18 @@ def _retry_after_seconds(resp):
     return min(max(seconds, 0.0), MAX_RETRY_AFTER_SECONDS)
 
 
+def validate_answer_text(text):
+    """Strip and check Trendyol's answer rules locally. Returns the stripped text."""
+    text = (text or "").strip()
+    if not text:
+        raise TrendyolError(ErrorCode.EMPTY_ANSWER)
+    if len(text) < ANSWER_MIN_LENGTH:
+        raise TrendyolError(ErrorCode.ANSWER_TOO_SHORT)
+    if len(text) > ANSWER_MAX_LENGTH:
+        raise TrendyolError(ErrorCode.ANSWER_TOO_LONG)
+    return text
+
+
 def _from_millis(ms):
     return datetime.fromtimestamp(ms / 1000, tz=timezone.utc) if ms else None
 
@@ -258,14 +270,7 @@ class TrendyolClient:
 
         Raises TrendyolError (validation codes have status_code=None and no HTTP call is made).
         """
-        text = (text or "").strip()
-        if not text:
-            raise TrendyolError(ErrorCode.EMPTY_ANSWER)
-        if len(text) < ANSWER_MIN_LENGTH:
-            raise TrendyolError(ErrorCode.ANSWER_TOO_SHORT)
-        if len(text) > ANSWER_MAX_LENGTH:
-            raise TrendyolError(ErrorCode.ANSWER_TOO_LONG)
-
+        text = validate_answer_text(text)
         resp = self._request("POST", f"{self._qna_path}/{question_id}/answers",
                              json={"text": text})
         # Docs disagree on the success body ({"answerId": n} vs a plain message string).

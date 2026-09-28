@@ -17,6 +17,9 @@ from app.models import Question
 TRENDYOL_OPEN = ("WAITING_FOR_ANSWER",)
 TRENDYOL_CLOSED = ("ANSWERED", "REJECTED", "REPORTED", "UNANSWERED")
 
+# Local statuses a user may answer (and try_lock_for_answering may claim).
+ANSWERABLE_STATUSES = ("NEW", "REOPENED")
+
 # Columns whose source of truth is Trendyol; upsert refreshes only these.
 SOURCE_FIELDS = (
     "trendyol_question_id",
@@ -111,16 +114,27 @@ def get_new_questions(session: Session, limit=50):
     return list(session.scalars(stmt))
 
 
-def try_lock_for_answering(session: Session, question_id):
-    """Atomically claim a NEW question. Returns True only for the single winner.
+def get_answerable_questions(session: Session, limit=50):
+    """Oldest-first NEW and REOPENED questions (what a user can answer)."""
+    stmt = (
+        select(Question)
+        .where(Question.local_status.in_(ANSWERABLE_STATUSES))
+        .order_by(Question.question_created_at.asc().nulls_last(), Question.id)
+        .limit(limit)
+    )
+    return list(session.scalars(stmt))
 
-    UPDATE ... WHERE local_status = 'NEW' is check-and-set in one statement: a
-    concurrent second UPDATE waits on the row lock, re-checks the WHERE against the
-    committed row (now ANSWERING), matches nothing and returns no row.
+
+def try_lock_for_answering(session: Session, question_id):
+    """Atomically claim a NEW/REOPENED question. Returns True only for the single winner.
+
+    UPDATE ... WHERE local_status IN ('NEW', 'REOPENED') is check-and-set in one
+    statement: a concurrent second UPDATE waits on the row lock, re-checks the WHERE
+    against the committed row (now ANSWERING), matches nothing and returns no row.
     """
     stmt = (
         update(Question)
-        .where(Question.id == question_id, Question.local_status == "NEW")
+        .where(Question.id == question_id, Question.local_status.in_(ANSWERABLE_STATUSES))
         .values(local_status="ANSWERING")
         .returning(Question.id)
     )
@@ -161,6 +175,25 @@ def mark_failed(session: Session, question_id, error_code, error_message, retrya
             error_message=error_message,
             retryable=retryable,
             retry_count=Question.retry_count + 1,
+        )
+        .returning(Question.id)
+    )
+    ok = session.execute(stmt).first() is not None
+    session.commit()
+    return ok
+
+
+def mark_closed(session: Session, question_id, error_code, error_message):
+    """ANSWERING -> CLOSED for final Trendyol outcomes (e.g. already answered elsewhere,
+    time limit expired). Records why, never retried. Returns False if not ANSWERING."""
+    stmt = (
+        update(Question)
+        .where(Question.id == question_id, Question.local_status == "ANSWERING")
+        .values(
+            local_status="CLOSED",
+            error_code=error_code,
+            error_message=error_message,
+            retryable=False,
         )
         .returning(Question.id)
     )

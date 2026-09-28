@@ -67,3 +67,21 @@ docker compose exec db psql -U trendyol -d trendyol_qna \
 > birden fazla kez çalışır. Production'da poller ayrı bir process/service olarak
 > çalıştırılmalı **veya** poll başında PostgreSQL advisory lock
 > (`pg_try_advisory_lock`) alınarak tek poller garanti edilmelidir.
+
+## Faz 4 — Soru listesi ve cevap API'si
+
+| Route | Açıklama |
+|---|---|
+| `GET /` | `NEW` ve `REOPENED` soruların basit HTML listesi |
+| `GET /api/questions?limit=50` | Aynı liste, JSON (`limit` 1–200) |
+| `POST /api/answer` | `{"question_id": <local id>, "text": "..."}` |
+
+Tüm `/api/*` yanıtları: `{"ok": true, "data": ...}` veya
+`{"ok": false, "error": {"code": "...", "message": "..."}}`. Trendyol'un ham hata gövdesi
+asla dönmez.
+
+```bash
+curl -s -X POST http://127.0.0.1:5000/api/answer \
+  -H 'Content-Type: application/json' \
+  -d '{"question_id": 1, "text": "Merhaba, ürün stokta mevcuttur."}'
+```

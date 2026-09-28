@@ -2,9 +2,7 @@ import logging
 import os
 
 from app import create_app
-from app.config import ConfigError
 from app.scheduler import start_scheduler
-from app.trendyol_client import TrendyolClient
 
 logger = logging.getLogger(__name__)
 
@@ -16,13 +14,11 @@ def _start_poller():
     # only the child (WERKZEUG_RUN_MAIN=true) may own the scheduler.
     if app.debug and os.environ.get("WERKZEUG_RUN_MAIN") != "true":
         return
-    config = app.extensions["config"]
-    try:
-        client = TrendyolClient.from_config(config)
-    except ConfigError as exc:
-        logger.warning("Poller disabled: %s", exc)
+    client = app.extensions["trendyol_client"]
+    if client is None:
+        logger.warning("Poller disabled: Trendyol client is not configured")
         return
-    start_scheduler(client, config.POLL_INTERVAL_SECONDS)
+    start_scheduler(client, app.extensions["config"].POLL_INTERVAL_SECONDS)
 
 
 if __name__ == "__main__":

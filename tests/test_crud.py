@@ -174,3 +174,23 @@ def test_status_check_constraint(session):
     session.add(PollRun())
     session.commit()
     assert session.scalars(select(PollRun.status)).one() == "RUNNING"
+
+
+def test_lock_accepts_reopened_but_not_failed_answered_closed(session):
+    for tid, status in enumerate(["REOPENED", "FAILED", "ANSWERED", "CLOSED"], start=1):
+        session.add(Question(trendyol_question_id=tid, question_text="?", local_status=status))
+    session.commit()
+    results = {get(session, tid).local_status: crud.try_lock_for_answering(session, get(session, tid).id)
+               for tid in range(1, 5)}
+    assert results == {"REOPENED": True, "FAILED": False, "ANSWERED": False, "CLOSED": False}
+
+
+def test_mark_closed_only_from_answering(session):
+    crud.upsert_questions(session, [q(1)])
+    row_id = get(session, 1).id
+    assert crud.mark_closed(session, row_id, "QUESTION_ALREADY_ANSWERED", "x") is False
+    crud.try_lock_for_answering(session, row_id)
+    assert crud.mark_closed(session, row_id, "QUESTION_ALREADY_ANSWERED", "x") is True
+    row = get(session, 1)
+    assert (row.local_status, row.retryable, row.retry_count) == ("CLOSED", False, 0)
+    assert crud.get_answerable_questions(session) == []
