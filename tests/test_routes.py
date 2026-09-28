@@ -279,3 +279,26 @@ def test_api_questions_includes_retryable_failed_only(Session, make_app):
         s.commit()
     data = make_app(None).test_client().get("/api/questions").get_json()["data"]
     assert [(d["trendyol_question_id"], d["retryable"]) for d in data] == [(1, True)]
+
+
+def test_too_long_answer_rejected_without_lock_or_api_call(Session, make_app):
+    qid = add(Session)
+    fake = FakeTrendyol()
+    resp = post(make_app(fake), qid, "x" * 2001)
+    assert resp.status_code == 400
+    assert resp.get_json()["error"]["code"] == ErrorCode.ANSWER_TOO_LONG
+    assert fake.calls == [] and load(Session, qid).local_status == "NEW"
+
+
+@pytest.mark.parametrize("code", [ErrorCode.FORBIDDEN_WORD, ErrorCode.ANSWER_TOO_SHORT,
+                                  ErrorCode.ANSWER_TOO_LONG, ErrorCode.EMPTY_ANSWER,
+                                  ErrorCode.AUTH_ERROR, ErrorCode.UNKNOWN_ERROR])
+def test_domain_errors_from_trendyol_are_failed_non_retryable(Session, make_app, code):
+    # Trendyol-side rejection after local validation passed (e.g. different counting rules).
+    qid = add(Session)
+    resp = post(make_app(FakeTrendyol(error=TrendyolError(code, status_code=400))), qid)
+    assert resp.status_code == 422 and resp.get_json()["error"]["retryable"] is False
+    q = load(Session, qid)
+    assert (q.local_status, q.retryable, q.error_code, q.locked_at) == ("FAILED", False, code, None)
+    # Not offered for answering again.
+    assert post(make_app(FakeTrendyol()), qid).get_json()["error"]["code"] == "ALREADY_LOCKED"
