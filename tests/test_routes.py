@@ -302,3 +302,115 @@ def test_domain_errors_from_trendyol_are_failed_non_retryable(Session, make_app,
     assert (q.local_status, q.retryable, q.error_code, q.locked_at) == ("FAILED", False, code, None)
     # Not offered for answering again.
     assert post(make_app(FakeTrendyol()), qid).get_json()["error"]["code"] == "ALREADY_LOCKED"
+
+
+# --- FAZ 5: answer flow with the REAL client over a fake transport ---------------
+
+def real_client(*replies):
+    adapter = FakeAdapter(*replies)
+    http = requests.Session()
+    http.mount("https://", adapter)
+    client = TrendyolClient(1234, "k", "s", "https://apigw.example", session=http,
+                            sleep=lambda s: None)
+    return client, adapter
+
+
+def test_end_to_end_success_stores_answer_id_text_and_status(Session, make_app):
+    qid = add(Session, tid=4242)
+    client, adapter = real_client((200, {"answerId": 31337}))
+    resp = post(make_app(client), qid, "  " + VALID + "  ")
+    assert resp.status_code == 200
+    assert resp.get_json()["data"] == {"question_id": qid, "local_status": "ANSWERED",
+                                       "answer_id": 31337}
+    assert adapter.calls[0][0].url.endswith("/questions/4242/answers")  # Trendyol id, not local
+    q = load(Session, qid)
+    assert (q.local_status, q.answer_text, q.answer_id) == ("ANSWERED", VALID, 31337)
+    assert q.answered_at is not None and q.error_code is None and q.locked_at is None
+
+
+@pytest.mark.parametrize("success_body", ["Cevabınız başarıyla kaydedilmiştir.",
+                                          {"message": "ok"}, {"answerId": None}])
+def test_end_to_end_success_without_answer_id_is_still_answered(Session, make_app, success_body):
+    qid = add(Session)
+    client, _ = real_client((200, success_body))
+    resp = post(make_app(client), qid)
+    assert resp.status_code == 200 and resp.get_json()["data"]["answer_id"] is None
+    q = load(Session, qid)
+    assert (q.local_status, q.answer_text, q.answer_id) == ("ANSWERED", VALID, None)
+
+
+def test_end_to_end_accepts_exactly_10_and_2000_characters(Session, make_app):
+    first, second = add(Session, tid=1), add(Session, tid=2)
+    client, adapter = real_client((200, {"answerId": 1}), (200, {"answerId": 2}))
+    assert post(make_app(client), first, "x" * 10).status_code == 200
+    assert post(make_app(client), second, "x" * 2000).status_code == 200
+    assert len(adapter.calls) == 2
+
+
+@pytest.mark.parametrize("text,code", [("   \n ", ErrorCode.EMPTY_ANSWER),
+                                       ("x" * 9, ErrorCode.ANSWER_TOO_SHORT),
+                                       ("x" * 2001, ErrorCode.ANSWER_TOO_LONG)])
+def test_end_to_end_invalid_text_never_reaches_trendyol(Session, make_app, text, code):
+    qid = add(Session)
+    client, adapter = real_client()
+    resp = post(make_app(client), qid, text)
+    assert resp.status_code == 400 and resp.get_json()["error"]["code"] == code
+    assert adapter.calls == []
+    q = load(Session, qid)
+    assert (q.local_status, q.answer_text, q.retry_count) == ("NEW", None, 0)
+
+
+@pytest.mark.parametrize("replies,http_status,code,retryable", [
+    ([(401, {"message": "x"})], 422, "AUTH_ERROR", False),
+    ([(403, {"rawError": "RBAC: access denied"})], 422, "AUTH_ERROR", False),
+    ([(404, {"message": "not found"})], 422, "UNKNOWN_ERROR", False),
+    ([(429, None)] * 3, 502, "RATE_LIMITED", True),
+    ([(503, {"message": "down"})] * 3, 502, "SERVER_ERROR", True),
+    ([requests.ReadTimeout("slow")] * 3, 502, "NETWORK_ERROR", True),
+])
+def test_end_to_end_api_failure_never_marks_answered(Session, make_app, replies, http_status,
+                                                      code, retryable):
+    qid = add(Session)
+    client, adapter = real_client(*replies)
+    resp = post(make_app(client), qid)
+    assert resp.status_code == http_status
+    assert resp.get_json()["error"]["code"] == code
+    assert resp.get_json()["error"]["retryable"] is retryable
+
+    q = load(Session, qid)
+    # Failure is recorded as FAILED; nothing says "answered": no text, id or timestamp.
+    assert (q.local_status, q.retryable, q.error_code) == ("FAILED", retryable, code)
+    assert (q.answer_text, q.answer_id, q.answered_at, q.locked_at) == (None, None, None, None)
+    # Retryable questions are offered again; non-retryable ones are not.
+    again = post(make_app(FakeTrendyol()), qid)
+    assert (again.status_code == 200) is retryable
+
+
+def test_end_to_end_second_answer_after_success_is_refused_without_http(Session, make_app):
+    qid = add(Session)
+    client, adapter = real_client((200, {"answerId": 1}))
+    assert post(make_app(client), qid).status_code == 200
+    second = post(make_app(client), qid, "Başka bir cevap yazıyorum.")
+    assert second.status_code == 409 and second.get_json()["error"]["code"] == "ALREADY_LOCKED"
+    assert len(adapter.calls) == 1
+    assert load(Session, qid).answer_text == VALID  # first answer untouched
+
+
+def test_end_to_end_documented_time_limit_message_closes_question(Session, make_app):
+    qid = add(Session)
+    msg = "Belirtilen süre içinde cevap vermediğiniz için soru kapatılmıştır."
+    client, adapter = real_client((400, {"message": msg}))
+    resp = post(make_app(client), qid)
+    assert resp.status_code == 422 and resp.get_json()["error"]["code"] == "TIME_LIMIT_EXCEEDED"
+    q = load(Session, qid)
+    assert (q.local_status, q.retryable, q.answer_text) == ("CLOSED", False, None)
+    assert len(adapter.calls) == 1
+
+
+def test_end_to_end_documented_already_answered_message_closes_question(Session, make_app):
+    qid = add(Session)
+    msg = "Bu soru daha önce cevaplandı. Cevaplanmış sorular tekrar cevaplanamaz."
+    client, _ = real_client((400, {"message": msg}))
+    resp = post(make_app(client), qid)
+    assert resp.get_json()["error"]["code"] == "QUESTION_ALREADY_ANSWERED"
+    assert load(Session, qid).local_status == "CLOSED"

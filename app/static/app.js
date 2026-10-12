@@ -23,6 +23,7 @@
     SERVER_ERROR: "Trendyol şu anda yanıt vermiyor. Biraz sonra tekrar deneyebilirsiniz.",
     NETWORK_ERROR: "Trendyol'a bağlanılamadı (zaman aşımı). Biraz sonra tekrar deneyebilirsiniz.",
     AUTH_ERROR: "Trendyol API kimlik bilgileri reddedildi. Yöneticiye haber verin.",
+    ACCESS_BLOCKED: "Trendyol erişimi şu anda engellendi (Cloudflare/IP kısıtı). Bu bir uygulama hatası değil; erişim açılınca cevabı tekrar gönderebilirsiniz.",
     TRENDYOL_NOT_CONFIGURED: "Trendyol API ayarları eksik; cevap gönderilemiyor.",
     QUESTION_NOT_FOUND: "Soru bulunamadı. Sayfayı yenileyin.",
     INTERNAL_ERROR: "Beklenmeyen bir sunucu hatası oluştu. Tekrar deneyebilirsiniz.",

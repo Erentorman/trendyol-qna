@@ -10,19 +10,32 @@
   <header class="page-header">
     <h1>Cevap bekleyen sorular</h1>
     <span class="badge-count" id="open-count">{{ questions|length }}</span>
+    <a class="header-link" href="{{ url_for('stage.page') }}">Stage test</a>
   </header>
 
   <main id="questions" data-min="{{ min_length }}" data-max="{{ max_length }}">
     {% for q in questions %}
-    <article class="card" data-question-id="{{ q.id }}" data-status="{{ q.local_status }}">
+    {# Product link/image come from Trendyol's raw item; only https URLs are rendered. #}
+    {% set raw = q.raw_payload if q.raw_payload is mapping else {} %}
+    {% set web_url = raw.get("webUrl") %}
+    {% set image_url = raw.get("imageUrl") %}
+    <article class="card" data-question-id="{{ q.id }}" data-status="{{ q.local_status }}" id="q-{{ q.id }}">
       <div class="card-head">
+        {% if image_url is string and image_url.startswith("https://") %}
+        <img class="product-img" src="{{ image_url }}" alt="" width="56" height="56" loading="lazy" referrerpolicy="no-referrer">
+        {% endif %}
         <span class="status status-{{ q.local_status|lower }}">{{ "FAILED · TEKRAR DENENEBİLİR" if q.local_status == "FAILED" else q.local_status }}</span>
         <span class="product">{{ q.product_name or "Ürün bilgisi yok" }}</span>
       </div>
       <p class="question">{{ q.question_text }}</p>
       <p class="meta">
         {{ q.customer_name or "Müşteri" }} ·
-        {{ q.question_created_at|local_dt or "tarih yok" }}
+        {{ q.question_created_at|local_dt or "tarih yok" }} ·
+        Soru #{{ q.trendyol_question_id }}
+        {% if q.product_main_id %}· Ürün kodu: {{ q.product_main_id }}{% endif %}
+        {% if web_url is string and web_url.startswith("https://") %}
+        · <a href="{{ web_url }}" target="_blank" rel="noopener noreferrer">Ürünü Trendyol'da aç</a>
+        {% endif %}
       </p>
 
       {% if q.local_status == "REOPENED" %}
@@ -63,6 +76,26 @@
     <p class="empty">Cevap bekleyen soru yok.</p>
     {% endfor %}
   </main>
+
+  {% if answered %}
+  <section class="answered" id="answered">
+    <h2>Son cevaplananlar</h2>
+    {% for q in answered %}
+    <article class="card is-answered" data-answered-id="{{ q.id }}">
+      <div class="card-head">
+        <span class="status status-answered">ANSWERED</span>
+        <span class="product">{{ q.product_name or "Ürün bilgisi yok" }}</span>
+      </div>
+      <p class="question">{{ q.question_text }}</p>
+      <p class="previous-answer"><strong>Cevabınız:</strong> {{ q.answer_text or "(kayıtlı cevap metni yok)" }}</p>
+      <p class="meta">
+        {{ q.answered_at|local_dt or "tarih yok" }} · Soru #{{ q.trendyol_question_id }}
+        {% if q.answer_id is not none %}· Cevap ID: {{ q.answer_id }}{% endif %}
+      </p>
+    </article>
+    {% endfor %}
+  </section>
+  {% endif %}
 
   <script src="{{ url_for('static', filename='app.js') }}"></script>
 </body>

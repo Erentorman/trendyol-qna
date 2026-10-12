@@ -1,0 +1,151 @@
+{% macro conn_row(label, key, item) -%}
+<li data-conn="{{ key }}" class="conn-{{ item.state|lower }}">
+  <span class="conn-label">{{ label }}:</span> <span data-role="conn-summary">{{ item.summary }}</span>
+</li>
+{%- endmacro %}
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Trendyol Stage Test</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <header class="page-header">
+    <h1>Trendyol Stage Test Araçları</h1>
+    <a class="header-link" href="{{ url_for('questions.index') }}">Cevaplama ekranı</a>
+  </header>
+
+  <main>
+    <section class="card connectivity">
+      <h2>Stage Connectivity</h2>
+      <ul id="connectivity">
+        {{ conn_row("Product GET", "product_get", connectivity.product_get) }}
+        {{ conn_row("Questions GET", "questions_get", connectivity.questions_get) }}
+        {{ conn_row("CreateQuestion POST", "create_question_post", connectivity.create_question_post) }}
+      </ul>
+      <p class="note">İstekler yalnızca <strong>TY_BASE_URL</strong> Trendyol Stage ise gönderilir.
+        Kimlik bilgileri sunucuda kalır; tarayıcıya gelmez.</p>
+    </section>
+
+    <section class="card">
+      <h2>1. Ürünü Getir</h2>
+      <form class="stage-form" data-tool="product" data-url="/api/stage/product" novalidate>
+        <label>Barcode
+          <input type="text" name="barcode" required autocomplete="off">
+        </label>
+        <div class="form-row"><span></span><button type="submit">Ürünü Getir</button></div>
+      </form>
+      <div class="result" data-result="product" role="status" aria-live="polite" hidden><dl></dl></div>
+    </section>
+
+    <section class="card">
+      <h2>2. Test Sorusu Oluştur</h2>
+      <form class="stage-form" data-tool="question" data-url="/api/stage/questions" novalidate>
+        <label>Content ID
+          <input type="number" name="content_id" min="1" step="1" required placeholder="1203155798">
+        </label>
+        <label>Soru Metni
+          <textarea name="text" rows="3" required placeholder="Bu ürün hakkında test sorusudur."></textarea>
+        </label>
+        <div class="stage-grid">
+          <label>User ID
+            <input type="number" name="user_id" min="1" step="1" value="{{ defaults.user_id }}">
+          </label>
+          <label>User Full Name
+            <input type="text" name="user_full_name" value="{{ defaults.user_full_name }}">
+          </label>
+        </div>
+        <div class="form-row"><span></span><button type="submit">Test Sorusu Gönder</button></div>
+      </form>
+      <div class="result" data-result="question" role="status" aria-live="polite" hidden><dl></dl></div>
+    </section>
+
+    <section class="card" id="test-history">
+      <h2>Son Oluşturulan Test Soruları (<span id="test-history-count">{{ test_questions|length }}</span>)</h2>
+      <p class="note">Test sorusu oluşturulduktan sonra Trendyol değerlendirme sürecinden geçer. Soru, WAITING_FOR_ANSWER durumuna geçene kadar cevap bekleyen listede görünmeyebilir.</p>
+      <table class="stage-questions">
+        <thead><tr><th>Question ID</th><th>Soru</th><th>Content ID</th><th>User ID</th><th>Kullanıcı</th><th>Oluşturma</th><th>HTTP</th><th>Durum</th></tr></thead>
+        <tbody id="test-history-rows">
+          {% for t in test_questions %}
+          <tr data-test-question-id="{{ t.question_id }}">
+            <td>{{ t.question_id }}</td><td>{{ t.text }}</td><td>{{ t.content_id }}</td><td>{{ t.user_id }}</td>
+            <td>{{ t.user_full_name }}</td><td>{{ t.created_at_local }}</td><td>{{ t.create_http_status }}</td>
+            <td class="test-label">{{ label }}</td>
+          </tr>
+          {% else %}
+          <tr class="empty-row"><td colspan="8">Henüz test sorusu oluşturulmadı.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </section>
+
+    <section class="card">
+      <h2>3. Soruları Yenile</h2>
+      <form class="stage-form" data-tool="poll" data-url="/api/stage/poll" novalidate>
+        <p class="note">Trendyol'dan WAITING_FOR_ANSWER soruları şimdi çeker (scheduler'ın yaptığı poll).</p>
+        <div class="form-row"><span></span><button type="submit">Soruları Yenile</button></div>
+      </form>
+      <div class="result" data-result="poll" role="status" aria-live="polite" hidden><dl></dl></div>
+    </section>
+
+    <section class="card">
+      <h2>4. Soru Detayını Getir</h2>
+      <form id="detail-form" class="stage-form" data-url="/api/stage/questions/" novalidate>
+        <p class="note">Yalnızca görüntüleme: sonuç veritabanına yazılmaz, cevaplama akışına girmez.</p>
+        <label>Question ID
+          <input type="number" name="question_id" min="1" step="1" required placeholder="400082764">
+        </label>
+        <div class="form-row"><span></span><button type="submit">Soru Detayını Getir</button></div>
+      </form>
+      <div class="result" id="detail-result" role="status" aria-live="polite" hidden>
+        <p id="detail-answerable" class="answerable"></p>
+        <dl></dl>
+        <details id="detail-raw">
+          <summary>Ham Trendyol JSON</summary>
+          <pre></pre>
+        </details>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Cevap bekleyen sorular (<span id="stage-question-count">{{ questions|length }}</span>)</h2>
+      <p class="note">Cevaplamak için <a href="{{ url_for('questions.index') }}">cevaplama ekranını</a> kullanın.</p>
+      <table class="stage-questions waiting-questions">
+        <thead><tr><th>Local ID</th><th>Trendyol ID</th><th>Durum</th><th>Soru</th><th>Ürün</th><th>Kullanıcı</th><th>Tarih</th><th>İşlem</th></tr></thead>
+        <tbody id="stage-questions">
+          {% for q in questions %}
+          {% set ty = q.trendyol_status or q.local_status %}
+          <tr data-question-id="{{ q.id }}">
+            <td>{{ q.id }}</td><td>{{ q.trendyol_question_id }}</td>
+            <td><span class="status status-{{ ty|lower }}">{{ ty }}</span>
+              {% if q.trendyol_status and q.local_status != q.trendyol_status %}<small class="local-status">yerel: {{ q.local_status }}</small>{% endif %}</td>
+            <td class="q-text">{{ q.question_text }}
+              <details class="q-detail"><summary>Detay</summary><dl>
+                <dt>Kullanıcı</dt><dd>{{ q.customer_name or "-" }}</dd>
+                {% if q.answer %}<dt>answer</dt><dd>{{ q.answer }}</dd>{% endif %}
+                {% if q.rejected_answer %}<dt>rejectedAnswer</dt><dd>{{ q.rejected_answer }}</dd>{% endif %}
+                {% if q.web_url %}<dt>webUrl</dt><dd>{{ q.web_url }}</dd>{% endif %}
+                {% if q.image_url %}<dt>imageUrl</dt><dd>{{ q.image_url }}</dd>{% endif %}
+              </dl></details></td>
+            <td class="q-product">
+              {% if q.image_url %}<img class="thumb" src="{{ q.image_url }}" alt="" width="40" height="40" loading="lazy" referrerpolicy="no-referrer">{% endif %}
+              {% if q.web_url %}<a href="{{ q.web_url }}" target="_blank" rel="noopener noreferrer">{{ q.product_name or "Ürünü aç" }}</a>{% else %}{{ q.product_name or "-" }}{% endif %}
+              {% if q.product_main_id %}<small class="local-status">Ana ID: {{ q.product_main_id }}</small>{% endif %}</td>
+            <td>{{ q.customer_name or "-" }}</td>
+            <td>{{ q.created_local or "-" }}</td>
+            <td>{% if ty == "WAITING_FOR_ANSWER" %}<a class="btn-answer" href="{{ url_for('questions.index') }}#q-{{ q.id }}">Cevapla</a>
+              {% else %}<span class="status status-{{ ty|lower }}">{{ ty }}</span>{% endif %}</td>
+          </tr>
+          {% else %}
+          <tr class="empty-row"><td colspan="8">Cevap bekleyen soru yok.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </section>
+  </main>
+
+  <script src="{{ url_for('static', filename='stage.js') }}"></script>
+</body>
+</html>

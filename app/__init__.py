@@ -32,8 +32,10 @@ def create_app(config=None, trendyol_client=None):
         return jsonify(status="error", database="unavailable"), 503
 
     from app.routes import bp, register_error_handlers
+    from app.stage import bp as stage_bp
 
     app.register_blueprint(bp)
+    app.register_blueprint(stage_bp)
     register_error_handlers(app)
 
     from app.cli import qna_cli

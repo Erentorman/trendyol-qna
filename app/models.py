@@ -98,3 +98,25 @@ class PollRun(Base):
     error_message: Mapped[str | None] = mapped_column(Text)
 
     __table_args__ = (CheckConstraint(_in("status", POLL_STATUSES), name="status"),)
+
+
+class StageTestQuestion(Base):
+    """Stage-only debug history of POSTed test questions.
+
+    Deliberately separate from `questions`: a row here is NOT a Trendyol-confirmed
+    question, is never answerable and is never read by the poll/answer flow.
+    """
+
+    __tablename__ = "stage_test_questions"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    trendyol_question_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    content_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    user_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    user_full_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    create_http_status: Mapped[int] = mapped_column(Integer, nullable=False)
+    correlation_id: Mapped[str | None] = mapped_column(String(255))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )

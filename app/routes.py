@@ -14,6 +14,7 @@ bp = Blueprint("questions", __name__)
 
 DEFAULT_LIMIT = 50
 MAX_LIMIT = 200
+ANSWERED_LIMIT = 20
 
 
 DISPLAY_TZ = ZoneInfo("Europe/Istanbul")  # DB stores UTC; the UI shows Turkish local time
@@ -57,7 +58,8 @@ def serialize(q):
 def index():
     with SessionLocal() as session:
         questions = crud.get_answerable_questions(session, limit=MAX_LIMIT)
-        return render_template("index.html", questions=questions,
+        answered = crud.get_answered_questions(session, limit=ANSWERED_LIMIT)
+        return render_template("index.html", questions=questions, answered=answered,
                                min_length=ANSWER_MIN_LENGTH, max_length=ANSWER_MAX_LENGTH)
 
 

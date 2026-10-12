@@ -37,7 +37,7 @@ def engine():
 @pytest.fixture
 def Session(engine):
     with engine.begin() as conn:
-        conn.execute(text("TRUNCATE questions, poll_runs RESTART IDENTITY"))
+        conn.execute(text("TRUNCATE questions, poll_runs, stage_test_questions RESTART IDENTITY"))
     return sessionmaker(bind=engine, expire_on_commit=False)
 
 

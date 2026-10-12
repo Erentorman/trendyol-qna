@@ -15,11 +15,10 @@ from sqlalchemy import select
 from app.db import SessionLocal
 from app.models import PollRun, Question
 from app.scheduler import poll_job
-from app.trendyol_client import TrendyolError
+from app.trendyol_client import STAGE_HOST, TrendyolError
 
 qna_cli = AppGroup("qna", help="Manual and Stage test helpers.")
 
-STAGE_HOST = "stageapigw.trendyol.com"
 SETTINGS = ("TY_SUPPLIER_ID", "TY_API_KEY", "TY_API_SECRET", "TY_BASE_URL", "TY_USER_AGENT",
             "POLL_INTERVAL_SECONDS")
 

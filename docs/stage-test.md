@@ -1,7 +1,7 @@
 # Trendyol Stage uçtan uca test
 
-Durum: **Stage testi henüz yapılmadı** — Stage credentials / sellerId yok.
-Local/mock testler (pytest) Stage testinin yerine geçmez.
+Durum: **Gerçek Stage kabul testi henüz tamamlanmadı** — Stage erişimi (Cloudflare/IP / IP yetkilendirmesi) bekleniyor.
+Local/mock testler (pytest) Stage testinin yerine geçmez. Güncel kabul kontrol listesi: `docs/endpoint-raporu.md` sonu.
 
 ## Ön koşullar (Trendyol'dan alınacak)
 
@@ -10,10 +10,9 @@ Local/mock testler (pytest) Stage testinin yerine geçmez.
 - [ ] `TY_BASE_URL=https://stageapigw.trendyol.com`
 - [ ] `TY_USER_AGENT` boş bırakılabilir → `"<sellerId> - SelfIntegration"`
 - [ ] Stage erişimi için IP yetkilendirmesi gerekip gerekmediği Trendyol'a sorulmalı
-- [ ] Stage'de test ürünü ve **test sorusu oluşturma** yöntemi: Stage'e özel soru oluşturma
-      servisinin path/body bilgisi resmi dokümanda doğrulanamadı → Trendyol entegrasyon
-      desteğinden teyit edilmeli. Oluşan soru Trendyol'da değerlendirmeye girebilir;
-      listede görünmesi gecikebilir.
+- [ ] Stage'de test ürünü (`contentId`) ve **test sorusu oluşturma** servisi: resmi dokümanda vardır
+      (`POST …/sellers/{sellerId}/questions`, Stage-only; bkz. `docs/endpoint-raporu.md` Bölüm 4).
+      Oluşan soru Trendyol'da değerlendirmeye girer; listede görünmesi gecikebilir.
 
 ## Test sırası
 

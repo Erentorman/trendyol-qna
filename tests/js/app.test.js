@@ -214,3 +214,52 @@ test("non-retryable backend error closes the card", async () => {
   assert.equal(c.button.disabled, true);
   assert.ok(c.card.classList.contains("is-done"));
 });
+
+test("empty or whitespace-only answer is blocked before any request", async () => {
+  let called = false;
+  const c = setup(async () => { called = true; });
+  type(c, "   \n  ");
+  assert.equal(c.button.disabled, true);
+  await c.form.fire("submit");
+  assert.equal(called, false);
+  assert.equal(c.message.textContent, ui.MESSAGES.EMPTY_ANSWER);
+});
+
+test("infrastructure block (Cloudflare/IP) gets a clear message and keeps the card open", async () => {
+  const f = deferredFetch();
+  const c = setup(f.fetchImpl);
+  type(c, VALID);
+  const p = c.form.fire("submit");
+  f.respond({ ok: false, error: { code: "ACCESS_BLOCKED", message: "x", retryable: true } });
+  await p;
+  assert.equal(c.message.textContent, ui.MESSAGES.ACCESS_BLOCKED);
+  assert.match(c.message.textContent, /Cloudflare/);
+  assert.ok(c.message.classList.contains("is-error"));
+  assert.equal(c.button.disabled, false);           // can resend once access is back
+  assert.notEqual(c.status.textContent, "ANSWERED"); // never looks answered
+  assert.ok(!c.card.classList.contains("is-done"));
+});
+
+test("failed request never marks the card ANSWERED", async () => {
+  for (const error of [{ code: "AUTH_ERROR" }, { code: "RATE_LIMITED", retryable: true },
+                       { code: "SERVER_ERROR", retryable: true }, { code: "NETWORK_ERROR", retryable: true }]) {
+    const f = deferredFetch();
+    const c = setup(f.fetchImpl);
+    type(c, VALID);
+    const p = c.form.fire("submit");
+    f.respond({ ok: false, error });
+    await p;
+    assert.notEqual(c.status.textContent, "ANSWERED");
+    assert.notEqual(c.card.dataset.status, "ANSWERED");
+    assert.ok(c.message.classList.contains("is-error"));
+  }
+});
+
+test("HTML body from a proxy is never shown", async () => {
+  const f = async () => ({ json: async () => { throw new SyntaxError("Unexpected token <"); } });
+  const c = setup(f);
+  type(c, VALID);
+  await c.form.fire("submit");
+  assert.equal(c.message.textContent, ui.MESSAGES.BAD_RESPONSE);
+  assert.ok(!c.message.textContent.includes("<"));
+});

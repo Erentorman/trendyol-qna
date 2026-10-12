@@ -147,6 +147,17 @@ def get_answerable_questions(session: Session, limit=50):
     return list(session.scalars(stmt))
 
 
+def get_answered_questions(session: Session, limit=20):
+    """Most recently answered first (read-only; feeds the "Son cevaplananlar" list)."""
+    stmt = (
+        select(Question)
+        .where(Question.local_status == "ANSWERED")
+        .order_by(Question.answered_at.desc().nulls_last(), Question.id.desc())
+        .limit(limit)
+    )
+    return list(session.scalars(stmt))
+
+
 def try_lock_for_answering(session: Session, question_id):
     """Atomically claim an answerable question. Returns True only for the single winner.
 

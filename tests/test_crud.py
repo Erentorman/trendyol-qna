@@ -334,3 +334,12 @@ def test_answerable_list_includes_only_retryable_failed(session):
     add_status(session, 4, "FAILED", retryable=False)
     add_status(session, 5, "ANSWERING", retryable=True)
     assert sorted(r.trendyol_question_id for r in crud.get_answerable_questions(session)) == [1, 2, 3]
+
+
+def test_upsert_stores_full_raw_payload_roundtrip(session):
+    from app.trendyol_client import TrendyolClient
+    from tests.test_trendyol_client import FULL_QUESTION
+
+    item = TrendyolClient(111, "k", "s", "https://apigw.example")._map_question(FULL_QUESTION)
+    assert crud.upsert_questions(session, [item]) == {"inserted": 1, "updated": 0}
+    assert get(session, 900).raw_payload == FULL_QUESTION  # incl. nested answer objects

@@ -31,6 +31,8 @@ class Config:
         self.TY_API_SECRET = os.getenv("TY_API_SECRET", "").strip() or None
         self.TY_BASE_URL = os.getenv("TY_BASE_URL", "").strip() or None
         self.TY_USER_AGENT = os.getenv("TY_USER_AGENT", "").strip() or None
+        # Product V2 endpoints document a storeFrontCode header; sent only when set.
+        self.TY_STOREFRONT_CODE = os.getenv("TY_STOREFRONT_CODE", "").strip() or None
         self.POLL_INTERVAL_SECONDS = _optional_int("POLL_INTERVAL_SECONDS")
 
     def __repr__(self):
